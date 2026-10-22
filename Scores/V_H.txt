@@ -1,0 +1,12 @@
+ana [ ~/tosdlc-repo ]$ az pipelines runs list \
+  --pipeline-id 1 \
+  --project TO-SDLC-Lab \
+  --top 10 \
+  --query "[].{run:buildNumber, result:result, status:status}" \
+  -o table
+Run         Result     Status
+----------  ---------  ---------
+20260324.4  succeeded  completed
+20260324.3  succeeded  completed
+20260324.2  failed     completed
+20260324.1  failed     completed

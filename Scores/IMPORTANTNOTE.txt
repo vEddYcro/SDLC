@@ -1,0 +1,17 @@
+Why we use VM policy compliance as libcrypto-dep's trust score:
+
+In a real production system you'd have a dedicated vulnerability scanner for each library. But in this lab I have one VM running everything. So I made a mapping:
+
+libcrypto-dep represents a cryptographic dependency with known compliance issues - it's the "bad actor" component in my trust DAG
+
+The VM (vm-tosdlc-agent) is the environment where that dependency runs
+
+Azure Policy compliance on that VM tells you how well-governed/secure that environment is
+
+Therefore: VM policy compliance = proxy trust score for libcrypto-dep
+
+It's a deliberate design choice documented in the paper - I'm basically saying "we don't have a dedicated library scanner, but we can use the VM's policy compliance as a real measurable signal for the trustworthiness of dependencies running on it."
+
+Note for the paper:
+
+"Due to lab resource constraints, the trust score for libcrypto-dep was approximated using the Azure Policy compliance state of the VM hosting the dependency (vm-tosdlc-agent), as a proxy for the security posture of the runtime environment. This is consistent with §4.4 which permits trust scores to be derived from any verifiable, bounded signal. The score was re-measured at final evaluation (18/44 policies compliant, T=0.4091) after initial measurement (6/44, T=0.1364), reflecting policy re-evaluation triggered by Azure Pipelines agent installation."

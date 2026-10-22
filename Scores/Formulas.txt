@@ -1,0 +1,70 @@
+V_I — Identity Assurance
+V_I = compliant_assignments / total_assignments
+V_I = 2/2 = 1.0
+
+V_C — Config Integrity
+V_C = compliant_policies / total_policies
+V_C = 199/223 = 0.8924
+
+V_B — Behavioral Conformity
+V_B = (total_findings - errors) / max(1, total_findings)
+V_B = (2 - 0) / 2 = 1.0
+
+V_H — Historical Reliability
+V_H = succeeded_runs / total_runs
+V_H = 2/4 = 0.5000
+
+V_E — Environmental Exposure
+V_E = 1 - (critical_vulns / max(1, total_vulns))
+V_E = 1 - (0/1) = 1.0
+(trivy found 0 CRITICAL/HIGH out of 0 total vulnerabilities → defaults to 1.0)
+
+T_x per phase — §4.2
+T_x^(p) = sum(w_i * V_i) for i in [I, C, B, H, E]
+
+p1_planning:    (0.30×1.0) + (0.20×0.8924) + (0.10×1.0) + (0.20×0.50) + (0.20×1.0) = 0.8785
+p2_development: (0.25×1.0) + (0.25×0.8924) + (0.25×1.0) + (0.15×0.50) + (0.10×1.0) = 0.8981
+p3_build:       (0.15×1.0) + (0.25×0.8924) + (0.30×1.0) + (0.20×0.50) + (0.10×1.0) = 0.8731
+p4_release:     (0.20×1.0) + (0.20×0.8924) + (0.20×1.0) + (0.20×0.50) + (0.20×1.0) = 0.8785
+p5_operate:     (0.20×1.0) + (0.15×0.8924) + (0.25×1.0) + (0.15×0.50) + (0.25×1.0) = 0.9089
+
+R(t) — Risk Signal — §6.6
+R(t) = 1 - (Defender_Secure_Score / 100)
+R(t) = 1 - (92/100) = 0.08
+
+θ adaptive thresholds — §4.3
+θ^(p)(t+1) = clip(θ^(p)(t) + α·R(t))
+α = 0.10, R(t) = 0.08 → α·R(t) = 0.008
+
+p1: clip(0.70 + 0.008) = 0.7080
+p2: clip(0.75 + 0.008) = 0.7580
+p3: clip(0.80 + 0.008) = 0.8080
+p4: clip(0.85 + 0.008) = 0.8580
+p5: clip(0.75 + 0.008) = 0.7580
+
+libcrypto-dep — VM policy proxy — §4.4
+libcrypto-dep = compliant_vm_policies / total_vm_policies
+libcrypto-dep = 18/44 = 0.4091
+
+Trust propagation — §4.4 Gödel t-norm
+T_propagated(a) = min(T_local(a), min(T_propagated(deps)))
+
+app-binary:        min(0.8785, min(0.8924, 0.4091)) = min(0.8785, 0.4091) = 0.4091
+release-container: min(0.8785, min(0.4091, 0.8924)) = min(0.8785, 0.4091) = 0.4091
+
+Trust Debt — §4.5
+TD^(p) = sum(max(0, θ^(p) - T_x)) for all components x in phase p
+
+p1: max(0, 0.7080-0.8785) + max(0, 0.7080-0.8924) + max(0, 0.7080-0.8924) = 0.0
+p2: max(0, 0.7580-0.8981) + max(0, 0.7580-0.8924) + max(0, 0.7580-0.4091) = 0.3489
+p3: max(0, 0.8080-0.8731) + max(0, 0.8080-0.4091) + max(0, 0.8080-0.8924) = 0.3989
+p4: max(0, 0.8580-0.8785) + max(0, 0.8580-0.4091) + max(0, 0.8580-0.8924) = 0.4489
+p5: max(0, 0.7580-0.9089) + max(0, 0.7580-0.4091) + max(0, 0.7580-0.8924) = 0.3489
+
+TD_total = 0 + 0.3489 + 0.3989 + 0.4489 + 0.3489 = 1.5456
+
+Normalized TD and governance — §6.4
+TD_normalized = TD_total / total_components
+TD_normalized = 1.5456 / 15 = 0.1030
+
+0.10 ≤ 0.1030 < 0.25 → AMBER: Intensified verification recommended

@@ -1,0 +1,96 @@
+cd ~/tosdlc-repo
+
+cat > azure-pipelines.yml << 'EOF'
+trigger:
+  branches:
+    include:
+      - master
+
+stages:
+  - stage: p2_Development
+    displayName: 'Phase p2 - Development (SAST -> V_B)'
+    jobs:
+      - job: SAST_Scan
+        pool:
+          name: ToSDLC-AgentPool
+        steps:
+          - checkout: self
+          - script: |
+              export PATH="$HOME/.local/bin:$PATH"
+              semgrep --config auto --json --output semgrep_results.json . || true
+              python3 parse_sast.py
+            displayName: 'SAST Scan - Real V_B'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: semgrep_results.json
+              artifactName: SAST-Results
+            displayName: 'Publish SAST Results'
+
+  - stage: p3_Build
+    displayName: 'Phase p3 - Build (Trivy -> V_E, History -> V_H)'
+    dependsOn: p2_Development
+    jobs:
+      - job: BuildAndScan
+        pool:
+          name: ToSDLC-AgentPool
+        steps:
+          - checkout: self
+          - script: dotnet build --configuration Release 2>&1 | tee build_output.txt
+            displayName: 'dotnet build'
+          - script: |
+              trivy fs --format json --output trivy_results.json . || true
+              python3 parse_trivy.py
+            displayName: 'Dependency Scan - Real V_E'
+          - script: python3 parse_history.py
+            displayName: 'Pipeline History - Real V_H'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: trivy_results.json
+              artifactName: Trivy-Results
+            displayName: 'Publish Trivy Results'
+EOF
+
+cat > parse_sast.py << 'EOF'
+import json
+d = json.load(open('semgrep_results.json'))
+findings = len(d.get('results', []))
+errors = len(d.get('errors', []))
+total = findings + errors
+passed = total - errors
+VB = round(passed / max(1, total), 4)
+print(f'TOTAL_RULES={total}')
+print(f'PASSED_RULES={passed}')
+print(f'V_B={VB}')
+EOF
+
+cat > parse_trivy.py << 'EOF'
+import json
+d = json.load(open('trivy_results.json'))
+vulns = [v for r in d.get('Results', []) for v in (r.get('Vulnerabilities') or [])]
+critical = sum(1 for v in vulns if v.get('Severity') in ['CRITICAL', 'HIGH'])
+total = len(vulns)
+VE = round(1 - (critical / max(1, total)), 4) if total > 0 else 1.0
+print(f'CRITICAL_VULNS={critical}')
+print(f'TOTAL_VULNS={total}')
+print(f'V_E={VE}')
+EOF
+
+cat > parse_history.py << 'EOF'
+import json, subprocess
+result = subprocess.run(
+    ['az', 'pipelines', 'runs', 'list',
+     '--pipeline-name', 'TO-SDLC-Pipeline',
+     '--project', 'TO-SDLC-Lab',
+     '--top', '20', '--output', 'json'],
+    capture_output=True, text=True)
+runs = json.loads(result.stdout) if result.stdout.strip().startswith('[') else []
+total = len(runs)
+success = sum(1 for r in runs if r.get('result') == 'succeeded')
+VH = round(success / max(1, total), 4)
+print(f'TOTAL_RUNS={total}')
+print(f'SUCCEEDED_RUNS={success}')
+print(f'V_H={VH}')
+EOF
+
+git add azure-pipelines.yml parse_sast.py parse_trivy.py parse_history.py
+git push origin master

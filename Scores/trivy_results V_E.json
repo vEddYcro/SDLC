@@ -1,0 +1,44 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.69.3"
+  },
+  "ReportID": "019d1ffd-ac39-7c18-aa38-3069b683b42e",
+  "CreatedAt": "2026-03-24T13:16:51.641795363Z",
+  "ArtifactID": "sha256:be42afeca778b3455218dd9e96f83193e8a49573049d8af6b855321f0239ddf3",
+  "ArtifactName": ".",
+  "ArtifactType": "repository",
+  "Metadata": {
+    "RepoURL": "https://dev.azure.com/amnda-tosdlc/TO-SDLC-Lab/_git/tosdlc-artifacts",
+    "Commit": "3260feac9b7a6b3d7ab5b63ba2a7de3ad466655b",
+    "CommitMsg": "Fix az CLI path in parse_history.py",
+    "Author": "Ana Kapulica \u003cakapuli@algebra.hr\u003e",
+    "Committer": "Ana Kapulica \u003cakapuli@algebra.hr\u003e"
+  },
+  "Results": [
+    {
+      "Target": "bin/Release/net6.0/pipelines-dotnet-core.deps.json",
+      "Class": "lang-pkgs",
+      "Type": "dotnet-core",
+      "Packages": [
+        {
+          "ID": "pipelines-dotnet-core/1.0.0",
+          "Name": "pipelines-dotnet-core",
+          "Identifier": {
+            "PURL": "pkg:nuget/pipelines-dotnet-core@1.0.0",
+            "UID": "2918349b23cc5968"
+          },
+          "Version": "1.0.0",
+          "Relationship": "root",
+          "Locations": [
+            {
+              "StartLine": 17,
+              "EndLine": 21
+            }
+          ],
+          "AnalyzedBy": "dotnet-core"
+        }
+      ]
+    }
+  ]
+}

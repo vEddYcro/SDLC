@@ -1,0 +1,152 @@
+ana [ ~/tosdlc-repo ]$ python3 trust_debt.py 
+========================================================================
+TO-SDLC Trust Debt Computation — §4.5
+========================================================================
+Phase                      θ    Components        TD    TD/|X|      Status
+------------------------------------------------------------------------
+p1_planning           0.7080             3    0.0000    0.0000          OK
+p2_development        0.7580             3    0.3489    0.1163     WARNING
+p3_build              0.8080             3    0.3989    0.1330     WARNING
+p4_release            0.8580             3    0.4489    0.1496     WARNING
+p5_operate            0.7580             3    0.3489    0.1163     WARNING
+------------------------------------------------------------------------
+TD_TOTAL                                15    1.5456    0.1030
+
+Bound verification:
+  0 ≤ TD_total=1.5456 ≤ 15: True ✓
+
+Governance thresholds (§6.4):
+  Normalized TD=0.103 → AMBER: Intensified verification recommended
+
+Component-level breakdown:
+  [p2_development] libcrypto-dep: θ=0.7580 - T=0.4091 = debt=0.3489
+  [p3_build] app-binary(prop): θ=0.8080 - T=0.4091 = debt=0.3989
+  [p4_release] release-container(prop): θ=0.8580 - T=0.4091 = debt=0.4489
+  [p5_operate] libcrypto-dep: θ=0.7580 - T=0.4091 = debt=0.3489
+
+Bound verification:
+  0 ≤ TD_total=2.6364 ≤ 15: True ✓
+
+Governance thresholds (§6.4):
+  Normalized TD=0.1758 → AMBER: Intensified verification recommended
+
+Component-level breakdown:
+  [p2_development] libcrypto-dep: θ=0.7580 - T=0.1364 = debt=0.6216
+  [p3_build] app-binary(prop): θ=0.8080 - T=0.1364 = debt=0.6716
+  [p4_release] release-container(prop): θ=0.8580 - T=0.1364 = debt=0.7216
+  [p5_operate] libcrypto-dep: θ=0.7580 - T=0.1364 = debt=0.6216
+
+Skripta za reprodukciju:
+
+ana [ ~/tosdlc-repo ]$ cat trust_debt.py 
+#!/usr/bin/env python3
+# trust_debt.py — implements §4.5
+# TD^(p)(t) = sum( max(0, θ^(p)(t) - T_x^(p)(t)) ) for all x in X_p
+
+def trust_debt_phase(theta: float, trust_scores: list) -> float:
+    '''
+    §4.5: TD^(p) = sum(max(0, θ - T_x)) for all x in X_p
+    Bounded: 0 ≤ TD ≤ |X_p|
+    '''
+    assert 0 <= theta <= 1
+    assert all(0 <= t <= 1 for t in trust_scores)
+    TD = sum(max(0.0, theta - T_x) for T_x in trust_scores)
+    assert 0 <= TD <= len(trust_scores), f'Bound violated: TD={TD}'
+    return round(TD, 4)
+
+def lifecycle_trust_debt(phase_debts: dict) -> float:
+    '''§4.5: TD_total = sum(TD^(p)) over all phases P'''
+    return round(sum(phase_debts.values()), 4)
+
+if __name__ == '__main__':
+    # Phase thresholds θ^(p)(t+1) from Module 7 (adaptive, real R(t))
+    # Component trust scores from Module 6 (T_x per phase)
+    # Plus propagated artifact trust from Module 8
+
+    phases = {
+        'p1_planning': {
+            'theta': 0.7080,  # from adaptive_threshold.py
+            'scores': [
+                0.8785,   # T_x p1 (phase trust score)
+                0.8924,   # base-image (real: V_C score)
+                0.8924,   # config-manifest (real: V_C score)
+            ],
+            'labels': ['phase_score', 'base-image', 'config-manifest']
+        },
+        'p2_development': {
+            'theta': 0.7580,
+            'scores': [
+                0.8981,   # T_x p2
+                0.8924,   # base-image
+                0.4091,   # libcrypto-dep (real: 18/44 VM policies)
+            ],
+            'labels': ['phase_score', 'base-image', 'libcrypto-dep']
+        },
+        'p3_build': {
+            'theta': 0.8080,
+            'scores': [
+                0.8731,   # T_x p3
+                0.4091,   # app-binary propagated (real: VM score)
+                0.8924,   # config-manifest
+            ],
+            'labels': ['phase_score', 'app-binary(prop)', 'config-manifest']
+        },
+        'p4_release': {
+            'theta': 0.8580,
+            'scores': [
+                0.8785,   # T_x p4
+                0.4091,   # release-container propagated (real)
+                0.8924,   # config-manifest
+            ],
+            'labels': ['phase_score', 'release-container(prop)', 'config-manifest']
+        },
+        'p5_operate': {
+            'theta': 0.7580,
+            'scores': [
+                0.9089,   # T_x p5
+                0.4091,   # libcrypto-dep (runtime risk)
+                0.8924,   # base-image
+            ],
+            'labels': ['phase_score', 'libcrypto-dep', 'base-image']
+        },
+    }
+
+    print("=" * 72)
+    print("TO-SDLC Trust Debt Computation — §4.5")
+    print("=" * 72)
+    print(f"{'Phase':20s}  {'θ':>6}  {'Components':>12}  {'TD':>8}  {'TD/|X|':>8}  {'Status':>10}")
+    print("-" * 72)
+
+    phase_debts = {}
+    for phase, data in phases.items():
+        td = trust_debt_phase(data['theta'], data['scores'])
+        n = len(data['scores'])
+        phase_debts[phase] = td
+        status = "CRITICAL" if td/n > 0.25 else "WARNING" if td/n > 0.10 else "OK"
+        print(f"{phase:20s}  {data['theta']:>6.4f}  {n:>12}  {td:>8.4f}  {td/n:>8.4f}  {status:>10}")
+
+    TD_total = lifecycle_trust_debt(phase_debts)
+    total_components = sum(len(d['scores']) for d in phases.values())
+    normalized_TD = round(TD_total / total_components, 4)
+
+    print("-" * 72)
+    print(f"{'TD_TOTAL':20s}  {'':>6}  {total_components:>12}  {TD_total:>8.4f}  {normalized_TD:>8.4f}")
+    print()
+    print("Bound verification:")
+    print(f"  0 ≤ TD_total={TD_total} ≤ {total_components}: {0 <= TD_total <= total_components} ✓")
+    print()
+    print("Governance thresholds (§6.4):")
+    if normalized_TD < 0.10:
+        print(f"  Normalized TD={normalized_TD} < 0.10 → GREEN: Normal operations")
+    elif normalized_TD < 0.25:
+        print(f"  Normalized TD={normalized_TD} → AMBER: Intensified verification recommended")
+    else:
+        print(f"  Normalized TD={normalized_TD} > 0.25 → RED: Deployment pause triggered")
+    print()
+    print("Component-level breakdown:")
+    for phase, data in phases.items():
+        theta = data['theta']
+        for i, (score, label) in enumerate(zip(data['scores'], data['labels'])):
+            debt = max(0.0, theta - score)
+            if debt > 0:
+                print(f"  [{phase}] {label}: θ={theta:.4f} - T={score:.4f} = debt={debt:.4f}")

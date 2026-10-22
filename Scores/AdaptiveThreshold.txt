@@ -1,0 +1,114 @@
+ana [ ~/tosdlc-repo ]$ python3 adaptive_threshold.py
+R(t) source: Microsoft Defender for Cloud Secure Score
+R(t) = 1 - (92/100) = 0.0800  [Secure Score = 92%]
+
+======================================================================
+TO-SDLC Adaptive Threshold Evaluation — §4.3
+α = 0.1  |  R(t) = 0.0800
+======================================================================
+Phase                    T_x    θ(t)    α·R(t)    θ(t+1)    Gate
+----------------------------------------------------------------------
+p1_planning           0.8785    0.70    0.0080    0.7080  PASS ✓
+p2_development        0.8981    0.75    0.0080    0.7580  PASS ✓
+p3_build              0.8731    0.80    0.0080    0.8080  PASS ✓
+p4_release            0.8785    0.85    0.0080    0.8580  PASS ✓
+p5_operate            0.9089    0.75    0.0080    0.7580  PASS ✓
+----------------------------------------------------------------------
+
+Boundedness verification (§4.3 clip function):
+  clip(1.5)  = 1.0   <- upper bound enforced
+  clip(-0.3) = 0.0   <- lower bound enforced
+  clip(0.75) = 0.75  <- no clipping needed
+
+Gate logic verification:
+  T_x=0.50 vs θ=0.75 → BLOCK (expect BLOCK)
+  T_x=0.90 vs θ=0.75 → PASS (expect PASS)
+  T_x=0.75 vs θ=0.75 → PASS (expect PASS)
+
+R(t) signal source: Defender Secure Score (§6.6 — threat intelligence feed)
+R(t) = 0.0800 — bounded in [0,1]: True ✓  [source: Defender Secure Score 92%]
+
+
+Skripta za reprodukciju:
+
+#!/usr/bin/env python3
+# adaptive_threshold.py — implements §4.3
+# θ^(p)(t+1) = clip(θ^(p)(t) + α·R(t))
+
+def clip(z: float) -> float:
+    '''clip(z) = min(1, max(0, z)) as defined in §4.3'''
+    return min(1.0, max(0.0, z))
+
+def adapt_threshold(theta_t: float, alpha: float, R_t: float) -> float:
+    '''
+    §4.3: θ^(p)(t+1) = clip(θ^(p)(t) + α·R(t))
+    Guarantees: 0 ≤ θ(t+1) ≤ 1
+    '''
+    assert 0 <= theta_t <= 1, f'theta_t must be in [0,1], got {theta_t}'
+    assert 0 <= alpha  <= 1, f'alpha must be in [0,1], got {alpha}'
+    assert 0 <= R_t    <= 1, f'R_t must be in [0,1], got {R_t}'
+    theta_next = clip(theta_t + alpha * R_t)
+    assert 0 <= theta_next <= 1, 'Boundedness invariant violated'
+    return round(theta_next, 4)
+
+def check_gate(T_x: float, theta: float) -> bool:
+    '''§4.3: component may progress only if T_x >= θ'''
+    return T_x >= theta
+
+if __name__ == '__main__':
+    # Real R(t) from Azure Policy: 33 non-compliant / 223 total = 0.1480
+    R_t = 1 - (92 / 100)  # Real: Defender Secure Score = 92%
+    print(f'R(t) source: Microsoft Defender for Cloud Secure Score')
+    print(f'R(t) = 1 - (92/100) = {R_t:.4f}  [Secure Score = 92%]')
+    print()
+
+    # Real T_x values from Module 6
+    phase_scores = {
+        'p1_planning':    0.8785,
+        'p2_development': 0.8981,
+        'p3_build':       0.8731,
+        'p4_release':     0.8785,
+        'p5_operate':     0.9089,
+    }
+
+    # Initial thresholds per phase
+    theta_initial = {
+        'p1_planning':    0.70,
+        'p2_development': 0.75,
+        'p3_build':       0.80,
+        'p4_release':     0.85,
+        'p5_operate':     0.75,
+    }
+
+    alpha = 0.10  # adaptation rate
+
+    print("=" * 70)
+    print("TO-SDLC Adaptive Threshold Evaluation — §4.3")
+    print(f"α = {alpha}  |  R(t) = {R_t:.4f}")
+    print("=" * 70)
+    print(f"{'Phase':20s}  {'T_x':>6}  {'θ(t)':>6}  {'α·R(t)':>8}  {'θ(t+1)':>8}  {'Gate':>6}")
+    print("-" * 70)
+
+    for phase in phase_scores:
+        T_x = phase_scores[phase]
+        theta_t = theta_initial[phase]
+        theta_next = adapt_threshold(theta_t, alpha, R_t)
+        gate = check_gate(T_x, theta_next)
+        print(f"{phase:20s}  {T_x:>6.4f}  {theta_t:>6.2f}  "
+              f"{alpha*R_t:>8.4f}  {theta_next:>8.4f}  "
+              f"{'PASS ✓' if gate else 'BLOCK ✗':>6}")
+
+    print("-" * 70)
+    print()
+    print("Boundedness verification (§4.3 clip function):")
+    print(f"  clip(1.5)  = {clip(1.5)}   <- upper bound enforced")
+    print(f"  clip(-0.3) = {clip(-0.3)}   <- lower bound enforced")
+    print(f"  clip(0.75) = {clip(0.75)}  <- no clipping needed")
+    print()
+    print("Gate logic verification:")
+    print(f"  T_x=0.50 vs θ=0.75 → {'PASS' if check_gate(0.50,0.75) else 'BLOCK'} (expect BLOCK)")
+    print(f"  T_x=0.90 vs θ=0.75 → {'PASS' if check_gate(0.90,0.75) else 'BLOCK'} (expect PASS)")
+    print(f"  T_x=0.75 vs θ=0.75 → {'PASS' if check_gate(0.75,0.75) else 'BLOCK'} (expect PASS)")
+    print()
+    print("R(t) signal source: Defender Secure Score (§6.6 — threat intelligence feed)")
+    print(f"R(t) = {R_t:.4f} — bounded in [0,1]: {0 <= R_t <= 1} ✓  [source: Defender Secure Score 92%]")

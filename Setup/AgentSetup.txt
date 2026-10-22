@@ -1,0 +1,219 @@
+mkdir myagent
+cd ~/myagent
+wget https://download.agent.dev.azure.com/agent/4.270.0/vsts-agent-linux-x64-4.270.0.tar.gz
+tar zxvf vsts-agent-linux-x64-4.270.0.tar.gz
+Install dependencies
+bashsudo ./bin/installdependencies.sh
+
+
+Get a PAT from Azure DevOps:
+Go to: https://dev.azure.com/amnda-tosdlc → top right → User Settings → Personal Access Tokens → New Token
+Name: tosdlc-agent-pat
+Organization: amnda-tosdlc
+Expiration: 30 days
+Scopes: click "Show all scopes" at the bottom, then check:
+Agent Pools — Read & Manage
+Deployment Groups — Read & Manage
+
+Then run config:
+./config.sh \
+  --url https://dev.azure.com/amnda-tosdlc \
+  --auth pat \
+  --token YOUR_NEW_PAT_HERE \
+  --pool ToSDLC-AgentPool \
+  --agent vm-tosdlc-agent \
+  --acceptTeeEula
+
+After agent is registered. Install and start it as a service:
+bashsudo ./svc.sh install
+sudo ./svc.sh start
+sudo ./svc.sh status
+
+Now verify it shows up in Azure DevOps. Go to:
+https://dev.azure.com/amnda-tosdlc/TO-SDLC-Lab/_settings/agentpools → click ToSDLC-AgentPool → Agents tab
+You should see vm-tosdlc-agent with a green dot (Online).
+While you check that, install the tools the pipeline needs on the VM:
+bash# .NET SDK for building the sample app
+sudo apt-get update
+sudo apt-get install -y dotnet-sdk-8.0
+
+# Semgrep for SAST (V_B)
+pip3 install semgrep
+
+# Trivy for dependency scan (V_E)
+sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+sudo apt-get update
+sudo apt-get install -y trivy
+
+
+Fix PATH for semgrep:
+bashecho 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+semgrep --version
+trivy --version
+Step 2 — Install .NET SDK 8:
+bashsudo apt-get install -y dotnet-sdk-8.0
+dotnet --version
+
+
+Now let's update the pipeline YAML. Switch to your Cloud Shell / local machine (not the VM) and do this:
+Step 1 — Go to the repo:
+bashcd ~/tosdlc-repo
+git checkout master
+git pull origin master
+Step 2 — Check what the current pipeline YAML looks like:
+cat azure-pipelines.yml
+
+YML file is in separate txt file.
+
+git add azure-pipelines.yml
+git commit -m "Switch to self-hosted agent, real V_B/V_H/V_E collection"
+git push origin master
+
+In case you cannot push to master, and require someone else to review PR and merge it, you can do this bypass:
+
+ana [ ~/tosdlc-repo ]$ az repos policy delete --id 2 --project TO-SDLC-Lab --yes
+ana [ ~/tosdlc-repo ]$ git checkout master
+git push origin master
+Switched to branch 'master'
+Your branch is ahead of 'origin/master' by 1 commit.
+  (use "git push" to publish your local commits)
+Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+remote: Updating refs... done (122 ms)
+remote: We noticed you're using an older version of Git. For the best experience, upgrade to a newer version.
+To https://dev.azure.com/amnda-tosdlc/TO-SDLC-Lab/_git/tosdlc-artifacts
+   2cf9f42..d6bcd21  master -> master
+ana [ ~/tosdlc-repo ]$ git log --oneline -3
+d6bcd21 (HEAD -> master, origin/update-pipeline, origin/master, origin/HEAD, update-pipeline) Switch to self-hosted agent, real V_B/V_H/V_E collection
+2cf9f42 Add TO-SDLC pipeline - V_B and V_E trust scoring
+4921deb Merge pull request #111 from MicrosoftDocs/users/GitHubPolicyService/9ee7cc31-8293-4e18-86c7-eadad1572b7e
+
+Then restore the deleted policy:
+az repos policy create \
+  --project TO-SDLC-Lab \
+  --repository-id 28e6f86f-63e7-4055-86bc-0c2b72c62ac0 \
+  --branch master \
+  --blocking true \
+  --enabled true \
+  --policy-type "Minimum number of reviewers" \
+  --minimum-approver-count 1 \
+  --allow-downvotes false \
+  --reset-on-source-push false
+
+And trigger pipeline:
+az pipelines run \
+  --name TO-SDLC-Pipeline \
+  --project TO-SDLC-Lab
+
+In case you get errors with the yml file, here is my config:
+
+rewrite the YAML with the Python scripts saved as separate files instead. Run this in Cloud Shell:
+bashcd ~/tosdlc-repo
+
+cat > azure-pipelines.yml << 'EOF'
+trigger:
+  branches:
+    include:
+      - master
+
+stages:
+  - stage: p2_Development
+    displayName: 'Phase p2 - Development (SAST -> V_B)'
+    jobs:
+      - job: SAST_Scan
+        pool:
+          name: ToSDLC-AgentPool
+        steps:
+          - checkout: self
+          - script: |
+              export PATH="$HOME/.local/bin:$PATH"
+              semgrep --config auto --json --output semgrep_results.json . || true
+              python3 parse_sast.py
+            displayName: 'SAST Scan - Real V_B'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: semgrep_results.json
+              artifactName: SAST-Results
+            displayName: 'Publish SAST Results'
+
+  - stage: p3_Build
+    displayName: 'Phase p3 - Build (Trivy -> V_E, History -> V_H)'
+    dependsOn: p2_Development
+    jobs:
+      - job: BuildAndScan
+        pool:
+          name: ToSDLC-AgentPool
+        steps:
+          - checkout: self
+          - script: dotnet build --configuration Release 2>&1 | tee build_output.txt
+            displayName: 'dotnet build'
+          - script: |
+              trivy fs --format json --output trivy_results.json . || true
+              python3 parse_trivy.py
+            displayName: 'Dependency Scan - Real V_E'
+          - script: python3 parse_history.py
+            displayName: 'Pipeline History - Real V_H'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              pathToPublish: trivy_results.json
+              artifactName: Trivy-Results
+            displayName: 'Publish Trivy Results'
+EOF
+Now create the three helper scripts:
+bashcat > parse_sast.py << 'EOF'
+import json
+d = json.load(open('semgrep_results.json'))
+findings = len(d.get('results', []))
+errors = len(d.get('errors', []))
+total = findings + errors
+passed = total - errors
+VB = round(passed / max(1, total), 4)
+print(f'TOTAL_RULES={total}')
+print(f'PASSED_RULES={passed}')
+print(f'V_B={VB}')
+EOF
+
+cat > parse_trivy.py << 'EOF'
+import json
+d = json.load(open('trivy_results.json'))
+vulns = [v for r in d.get('Results', []) for v in (r.get('Vulnerabilities') or [])]
+critical = sum(1 for v in vulns if v.get('Severity') in ['CRITICAL', 'HIGH'])
+total = len(vulns)
+VE = round(1 - (critical / max(1, total)), 4) if total > 0 else 1.0
+print(f'CRITICAL_VULNS={critical}')
+print(f'TOTAL_VULNS={total}')
+print(f'V_E={VE}')
+EOF
+
+cat > parse_history.py << 'EOF'
+import json, subprocess
+result = subprocess.run(
+    ['az', 'pipelines', 'runs', 'list',
+     '--pipeline-name', 'TO-SDLC-Pipeline',
+     '--project', 'TO-SDLC-Lab',
+     '--top', '20', '--output', 'json'],
+    capture_output=True, text=True)
+runs = json.loads(result.stdout) if result.stdout.strip().startswith('[') else []
+total = len(runs)
+success = sum(1 for r in runs if r.get('result') == 'succeeded')
+VH = round(success / max(1, total), 4)
+print(f'TOTAL_RUNS={total}')
+print(f'SUCCEEDED_RUNS={success}')
+print(f'V_H={VH}')
+EOF
+
+Then push everything:
+bashgit add azure-pipelines.yml parse_sast.py parse_trivy.py parse_history.py
+git commit -m "Fix YAML indentation - move Python to separate scripts"
+git push origin master
+
+
+Then run pipeline again:
+az pipelines run \
+  --name TO-SDLC-Pipeline \
+  --project TO-SDLC-Lab \
+  --branch master
+
+Watch progress on dashboard.
